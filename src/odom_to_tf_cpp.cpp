@@ -20,8 +20,8 @@ class OdomToTF : public rclcpp::Node {
             std::string odom_topic_2;
             frame_id = this->declare_parameter("frame_id", std::string("odom"));
             child_frame_id = this->declare_parameter("child_frame_id", std::string("base_footprint"));
-            odom_topic_1 = this->declare_parameter("odom_topic_1", std::string("/lio_sam/mapping/odometry"));
-            odom_topic_2 = this->declare_parameter("odom_topic_2", std::string("/dog_odom"));
+            odom_topic_2 = this->declare_parameter("odom_topic_1", std::string("/lio_sam/mapping/odometry"));
+            odom_topic_1 = this->declare_parameter("odom_topic_2", std::string("/dog_odom"));
             RCLCPP_INFO(this->get_logger(), "odom_topic set to %s and %s",
                         odom_topic_1.c_str(), odom_topic_2.c_str());
             if (frame_id != "") {
@@ -50,6 +50,7 @@ class OdomToTF : public rclcpp::Node {
         nav_msgs::msg::Odometry lastOdom, relativeOdom;
         int freqDiv_1 = 0, freqDiv_2 = 0;
         bool initial_1 = true, initial_2 = true;
+        tf2::Quaternion initial_orientation;
 
         void odomCallback_1(const nav_msgs::msg::Odometry::SharedPtr msg) {
             if (initial_1)
@@ -58,7 +59,7 @@ class OdomToTF : public rclcpp::Node {
                 initial_pos_y = msg->pose.pose.position.y;
                 initial_pos_z = msg->pose.pose.position.z;
 
-                tf2::Quaternion initial_orientation(
+                initial_orientation = tf2::Quaternion(
                     msg->pose.pose.orientation.x,
                     msg->pose.pose.orientation.y,
                     msg->pose.pose.orientation.z,
@@ -71,7 +72,6 @@ class OdomToTF : public rclcpp::Node {
                 initial_1 = false;
 
             }
-
 
             auto relative_pos_x = msg->pose.pose.position.x - initial_pos_x;
             auto relative_pos_y = msg->pose.pose.position.y - initial_pos_y;
@@ -90,6 +90,37 @@ class OdomToTF : public rclcpp::Node {
             tfs_.transform.translation.x = relative_pos_x;
             tfs_.transform.translation.y = relative_pos_y;
             tfs_.transform.translation.z = msg->pose.pose.position.z;
+
+            // Convert input quaternions to tf2::Quaternion for manipulation
+            tf2::Quaternion robot_quat(
+                msg->pose.pose.orientation.x,
+                msg->pose.pose.orientation.y,
+                msg->pose.pose.orientation.z,
+                msg->pose.pose.orientation.w
+            );
+
+            // tf2::fromMsg(msg->pose.pose.orientation, robot_quat);
+            // tf2::fromMsg(reference_orientation, initial_orientation);
+
+            // Compute the inverse of the reference orientation
+            tf2::Quaternion reference_quat_inv = initial_orientation.inverse();
+
+            // Compute the relative orientation
+            tf2::Quaternion relative_quat = reference_quat_inv * robot_quat;
+
+            // Normalize the result to avoid numerical drift
+            relative_quat.normalize();
+
+            // Convert the result back to geometry_msgs::msg::Quaternion
+            // if (++freqDiv_1 == 1)
+            // {
+            //     tfs_.transform.rotation.x = relative_quat.x();
+            //     tfs_.transform.rotation.y = relative_quat.y();
+            //     tfs_.transform.rotation.z = relative_quat.z();
+            //     tfs_.transform.rotation.w = relative_quat.w();
+            //     freqDiv_1 = 0;
+            // }
+            
 
 
             tf2::Quaternion current_orientation(
@@ -110,7 +141,7 @@ class OdomToTF : public rclcpp::Node {
             tf2::Quaternion relative_orientation;
             relative_orientation.setRPY(roll, pitch, relative_yaw);
 
-            if (++freqDiv_1 == 50)
+            if (++freqDiv_1 == 1)
             {
                 freqDiv_1 = 0;
                 tfs_.transform.rotation = msg->pose.pose.orientation;
@@ -123,6 +154,9 @@ class OdomToTF : public rclcpp::Node {
             // tfs_.transform.rotation.w = relative_orientation.w();
 
             tfb_->sendTransform(tfs_);
+            // tfs_.header.frame_id = "base_footprint";
+            // tfs_.child_frame_id = "odom1";
+            // tfb_->sendTransform(tfs_);
         }
 
         void odomCallback_2(const nav_msgs::msg::Odometry::SharedPtr msg) {
